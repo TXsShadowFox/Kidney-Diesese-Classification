@@ -1,0 +1,934 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Kidney CT Classifier</title>
+	<meta name="description" content="Upload a kidney CT slice and a VGG16 transfer-learning model classifies it as Normal or Tumor.">
+	<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='16' fill='%23FCE4EC'/%3E%3Cpath d='M17 6C11 6 7 10.5 7 16.5S11 27 17 27c3.6 0 6-2 6-4.6 0-2-1.6-3-3.2-3.8-1.3-.6-1.8-1.3-1.8-2.1s.5-1.5 1.8-2.1C21.4 13.6 23 12.6 23 10.6 23 8 20.6 6 17 6z' fill='%23233876'/%3E%3Ccircle cx='11.5' cy='11' r='3.2' fill='%23F5B82E'/%3E%3C/svg%3E">
+	<link rel="preconnect" href="https://fonts.googleapis.com">
+	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+	<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Alexandria:wght@500;600;700&family=DM+Sans:wght@400;500;700&family=Plus+Jakarta+Sans:wght@400;500;700;800&display=swap">
+	<link rel="stylesheet" href="https://api.fontshare.com/v2/css?f[]=satoshi@400,500,700&display=swap">
+	<script>
+		// lets the CSS hide reveal-on-scroll content only when the script that reveals it can run,
+		// and plays the intro screen once per browser session
+		document.documentElement.classList.add("js");
+		try {
+			if (sessionStorage.getItem("introSeen")) document.documentElement.classList.add("intro-seen");
+			sessionStorage.setItem("introSeen", "1");
+		} catch (e) {}
+	</script>
+	<style>
+		:root {
+			color-scheme: light;
+			--bg: #f9f8f5;
+			--ink: #020617;
+			--navy: #233876;
+			--text: #4b4f5c;
+			--muted: #6b6e78;
+			--soft: #8b8e98;
+			--dark: #1d1715;
+			--line: rgba(35, 56, 118, 0.12);
+			--card-blue: #e4eaf2;
+			--card-mint: #e4efe9;
+			--card-sky: #eef6fb;
+			--stack-1: #f3f3fd;
+			--stack-2: #ededfb;
+			--stack-3: #e8e8f8;
+			--stack-4: #e3e3f5;
+			--footer: #f5f5f5;
+			--intro: #212121;
+			--tumor: #c2410c;
+			--normal: #15803d;
+			--font-head: "Plus Jakarta Sans", system-ui, sans-serif;
+			--font-display: "Alexandria", "Plus Jakarta Sans", system-ui, sans-serif;
+			--font-body: "Satoshi", "DM Sans", system-ui, sans-serif;
+			--wrap: 1120px;
+			--gutter: 24px;
+		}
+
+		*, *::before, *::after { box-sizing: border-box; }
+		html { scroll-behavior: smooth; scroll-padding-top: 96px; }
+		body {
+			margin: 0;
+			background: var(--bg);
+			color: var(--ink);
+			font: 500 16px/1.6 var(--font-body);
+			-webkit-font-smoothing: antialiased;
+			overflow-x: clip;
+		}
+		img { display: block; max-width: 100%; }
+		[hidden] { display: none !important; }
+		h1, h2, h3, h4, p { margin: 0; }
+		a { color: inherit; }
+		button { font: inherit; }
+		:focus-visible { outline: 2px solid var(--navy); outline-offset: 3px; border-radius: 6px; }
+		.sr-only {
+			position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+			overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+		}
+		.wrap { width: 100%; max-width: calc(var(--wrap) + var(--gutter) * 2); margin: 0 auto; padding: 0 var(--gutter); }
+
+		/* ---------- intro screen ---------- */
+		.intro {
+			position: fixed; inset: 0; z-index: 100;
+			display: grid; place-items: center;
+			background: var(--intro); color: #fff;
+			animation: intro-out 0.7s cubic-bezier(0.7, 0, 0.2, 1) 1.9s forwards;
+		}
+		.intro-seen .intro { display: none; }
+		.intro-words {
+			height: 1.4em; overflow: hidden;
+			font: 600 24px/1.4 var(--font-display);
+			transform: translateY(-34px);
+		}
+		.intro-words div { animation: intro-words 1.8s cubic-bezier(0.7, 0, 0.2, 1) forwards; }
+		.intro-words span { display: block; height: 1.4em; text-align: center; }
+		.intro-line { position: absolute; left: 0; right: 0; top: 50%; height: 2px; background: rgba(255, 255, 255, 0.35); }
+		.intro-line b { display: block; height: 100%; background: #fff; transform-origin: left; animation: intro-line 1.8s ease-in-out forwards; }
+		@keyframes intro-words {
+			0%, 26% { transform: translateY(0); }
+			36%, 62% { transform: translateY(-1.4em); }
+			72%, 100% { transform: translateY(-2.8em); }
+		}
+		@keyframes intro-line { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+		@keyframes intro-out { to { transform: translateY(-100%); visibility: hidden; } }
+
+		/* ---------- navigation ---------- */
+		.nav {
+			position: fixed; top: 16px; left: 50%; z-index: 50;
+			transform: translateX(-50%);
+			width: min(720px, calc(100% - 32px));
+			display: flex; align-items: center; justify-content: space-between; gap: 12px;
+			padding: 7px 7px 7px 10px;
+			border-radius: 999px;
+			background: rgba(252, 252, 252, 0.88);
+			-webkit-backdrop-filter: blur(14px);
+			backdrop-filter: blur(14px);
+			box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.03);
+			transition: width 0.4s ease, box-shadow 0.4s ease;
+		}
+		.nav.scrolled { width: min(620px, calc(100% - 32px)); box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.04), 0 12px 32px rgba(15, 23, 42, 0.08); }
+		.brand { display: flex; align-items: center; gap: 10px; text-decoration: none; min-width: 0; }
+		.logo {
+			flex: none; width: 36px; height: 36px; border-radius: 50%;
+			display: grid; place-items: center; background: #fce4ec;
+		}
+		.logo svg { width: 22px; height: 22px; }
+		.brand-name {
+			font: 600 15px/1 var(--font-head); color: var(--ink); white-space: nowrap;
+			max-width: 200px; overflow: hidden; transition: max-width 0.4s ease, opacity 0.3s ease;
+		}
+		.nav.scrolled .brand-name { max-width: 0; opacity: 0; }
+		.nav-links { display: flex; gap: 4px; }
+		.nav-links a {
+			padding: 8px 14px; border-radius: 999px; text-decoration: none;
+			font-size: 15px; color: var(--ink); transition: background 0.2s;
+		}
+		.nav-links a:hover { background: rgba(35, 56, 118, 0.07); }
+
+		/* ---------- buttons ---------- */
+		.btn {
+			display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+			height: 44px; padding: 0 22px; border: 0; border-radius: 999px;
+			font: 500 15px/1 var(--font-body); text-decoration: none; white-space: nowrap; cursor: pointer;
+			transition: transform 0.2s ease, background 0.2s ease, opacity 0.2s ease;
+		}
+		.btn-dark { background: var(--dark); color: #fff; }
+		.btn-dark:hover { background: #000; transform: translateY(-1px); }
+		.btn-dark:disabled { opacity: 0.32; cursor: not-allowed; transform: none; background: var(--dark); }
+		.btn-ghost { background: rgba(255, 255, 255, 0.7); color: var(--ink); box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.1); }
+		.btn-ghost:hover { background: #fff; transform: translateY(-1px); }
+		.link-btn {
+			padding: 0; border: 0; background: none; cursor: pointer;
+			color: var(--navy); font-weight: 700; text-decoration: underline; text-underline-offset: 3px;
+		}
+
+		/* ---------- hero ---------- */
+		.hero { position: relative; overflow: hidden; padding: 150px 0 90px; min-height: min(780px, 100vh); display: flex; align-items: center; }
+		.blobs { position: absolute; inset: 0; pointer-events: none; }
+		.blobs i { position: absolute; border-radius: 50%; filter: blur(80px); opacity: 0.6; animation: drift 16s ease-in-out infinite alternate; }
+		.blobs .b1 { width: 420px; height: 420px; left: -120px; top: 120px; background: #fad4d8; }
+		.blobs .b2 { width: 340px; height: 340px; left: 32%; top: 260px; background: #fde8cc; animation-delay: -5s; }
+		.blobs .b3 { width: 480px; height: 480px; right: -140px; top: 40px; background: #e2e0fa; animation-delay: -9s; }
+		@keyframes drift { to { transform: translate(40px, -30px) scale(1.08); } }
+		.hero-grid { position: relative; display: grid; grid-template-columns: 1.6fr 1fr; align-items: center; gap: 48px; }
+		.hero h1 {
+			font: 500 clamp(26px, 2.8vw, 35px)/1.45 var(--font-head);
+			color: var(--navy); letter-spacing: -0.02em; text-wrap: balance;
+		}
+		.hero h1 em { font-style: normal; font-weight: 700; font-size: 1.28em; letter-spacing: -0.03em; }
+		.hero-lede { margin-top: 22px; max-width: 540px; font-size: 17px; color: var(--muted); }
+		.hero-lede strong { color: var(--text); }
+		.hero-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 32px; }
+		.badge { position: relative; justify-self: center; width: min(300px, 70vw); aspect-ratio: 1; }
+		.badge-ring { position: absolute; inset: 0; width: 100%; height: 100%; animation: spin 26s linear infinite; }
+		.badge-ring text { font: 500 15px var(--font-display); fill: #55555d; letter-spacing: 3px; }
+		.badge img {
+			position: absolute; inset: 21%; width: 58%; height: 58%;
+			border-radius: 50%; object-fit: cover;
+			box-shadow: 0 18px 40px rgba(35, 56, 118, 0.18);
+		}
+		@keyframes spin { to { transform: rotate(360deg); } }
+
+		/* ---------- marquee ---------- */
+		.marquee {
+			padding: 40px 0 20px; overflow: hidden;
+			-webkit-mask-image: linear-gradient(90deg, transparent, #000 8%, #000 92%, transparent);
+			mask-image: linear-gradient(90deg, transparent, #000 8%, #000 92%, transparent);
+		}
+		.marquee-track { display: flex; width: max-content; animation: marquee 38s linear infinite; }
+		.marquee-track + .marquee-track { animation-direction: reverse; margin-top: 4px; }
+		.marquee-track p {
+			padding-right: 0.3em; white-space: nowrap;
+			font: 600 clamp(22px, 2.6vw, 32px)/1.45 var(--font-display); color: rgba(0, 0, 0, 0.75);
+		}
+		@keyframes marquee { to { transform: translateX(-50%); } }
+
+		/* ---------- sections ---------- */
+		.section { padding: 110px 0 0; }
+		.section-title {
+			text-align: center;
+			font: 800 clamp(28px, 3.2vw, 38px)/1.2 var(--font-head); color: var(--navy); letter-spacing: -0.02em;
+		}
+		.section-sub { max-width: 600px; margin: 14px auto 0; text-align: center; color: var(--muted); }
+
+		/* ---------- check a scan ---------- */
+		.check-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 44px; }
+		.card { display: flex; flex-direction: column; gap: 18px; padding: 18px; border-radius: 20px; }
+		.card-blue { background: var(--card-blue); }
+		.card-mint { background: var(--card-mint); }
+		.card-foot { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 2px 8px 4px; min-height: 48px; }
+		.card-title { font: 400 22px/1.25 var(--font-head); color: #63636c; letter-spacing: -0.01em; }
+		.card-meta { margin-top: 2px; font-size: 14px; color: var(--soft); overflow-wrap: anywhere; }
+
+		.drop {
+			position: relative; flex: 1; min-height: 340px; overflow: hidden;
+			display: grid; place-items: center; padding: 24px;
+			border: 1.5px dashed rgba(35, 56, 118, 0.28); border-radius: 14px;
+			background: rgba(255, 255, 255, 0.5);
+			text-align: center; cursor: pointer;
+			transition: background 0.2s, border-color 0.2s;
+		}
+		.drop:hover, .drop.dragging { background: rgba(255, 255, 255, 0.85); border-color: var(--navy); }
+		.drop:focus-within { outline: 2px solid var(--navy); outline-offset: 3px; }
+		.drop-empty { display: grid; justify-items: center; gap: 6px; color: var(--muted); }
+		.drop-icon {
+			width: 60px; height: 60px; margin-bottom: 8px; border-radius: 50%;
+			display: grid; place-items: center; background: #fff; color: var(--navy);
+			box-shadow: 0 8px 24px rgba(35, 56, 118, 0.12);
+			transition: transform 0.25s ease;
+		}
+		.drop:hover .drop-icon, .drop.dragging .drop-icon { transform: translateY(-4px); }
+		.drop-empty strong { font: 700 18px/1.3 var(--font-head); color: var(--ink); }
+		.drop-empty u { color: var(--navy); text-underline-offset: 3px; }
+		.drop-empty small { margin-top: 6px; font-size: 13px; color: var(--soft); }
+		.drop img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+		.drop.has-image { background: #0b0b0d; border-style: solid; border-color: transparent; }
+		.drop.has-image .drop-empty { display: none; }
+		.drop-change {
+			position: absolute; right: 12px; bottom: 12px; z-index: 1;
+			padding: 6px 12px; border-radius: 999px;
+			background: rgba(255, 255, 255, 0.9); color: var(--ink); font-size: 13px;
+			display: none;
+		}
+		.drop.has-image .drop-change { display: block; }
+		.drop.scanning::after {
+			content: ""; position: absolute; left: 0; right: 0; top: 0; height: 2px;
+			background: linear-gradient(90deg, transparent, #7dd3fc, transparent);
+			box-shadow: 0 0 18px 5px rgba(125, 211, 252, 0.55);
+			animation: scan 1.4s ease-in-out infinite alternate;
+		}
+		@keyframes scan { to { top: calc(100% - 2px); } }
+
+		.result {
+			flex: 1; min-height: 340px; padding: 28px;
+			display: flex; flex-direction: column; justify-content: center;
+			border-radius: 14px; background: rgba(255, 255, 255, 0.55);
+		}
+		.result-msg { display: grid; justify-items: center; gap: 8px; text-align: center; }
+		.result-msg h4 { font: 700 18px/1.3 var(--font-head); color: var(--ink); }
+		.result-msg p { max-width: 320px; color: var(--muted); }
+		.result-art {
+			width: 60px; height: 60px; margin-bottom: 8px; border-radius: 50%;
+			display: grid; place-items: center; background: #fff;
+			box-shadow: 0 8px 24px rgba(35, 56, 118, 0.1);
+		}
+		.result-art svg { width: 28px; height: 28px; }
+		[data-state="empty"] .result-art svg { opacity: 0.35; }
+		[data-state="error"] .result-art { color: var(--tumor); font: 800 26px/1 var(--font-head); }
+		.spinner { width: 30px; height: 30px; border-radius: 50%; border: 3px solid rgba(35, 56, 118, 0.15); border-top-color: var(--navy); animation: spin 0.9s linear infinite; }
+
+		.result-kicker { font: 700 12px/1 var(--font-body); letter-spacing: 0.14em; text-transform: uppercase; color: var(--soft); }
+		.result-label {
+			display: flex; align-items: center; gap: 12px; margin-top: 12px;
+			font: 800 clamp(36px, 4vw, 48px)/1.1 var(--font-head); letter-spacing: -0.03em; color: var(--navy);
+		}
+		.result-label::before { content: ""; flex: none; width: 14px; height: 14px; border-radius: 50%; background: currentColor; }
+		.result-label[data-tone="tumor"] { color: var(--tumor); }
+		.result-label[data-tone="normal"] { color: var(--normal); }
+		.result-conf { margin-top: 8px; color: var(--muted); }
+		.bars { display: grid; gap: 12px; margin-top: 22px; }
+		.bar-head { display: flex; justify-content: space-between; font-size: 14px; color: var(--text); }
+		.bar-head span:last-child { font-variant-numeric: tabular-nums; }
+		.bar-track { height: 8px; margin-top: 6px; border-radius: 999px; background: rgba(35, 56, 118, 0.1); overflow: hidden; }
+		.bar-fill { height: 100%; border-radius: inherit; background: var(--navy); transform-origin: left; animation: grow 0.9s cubic-bezier(0.2, 0.7, 0.2, 1); }
+		.bar-fill[data-tone="tumor"] { background: var(--tumor); }
+		.bar-fill[data-tone="normal"] { background: var(--normal); }
+		@keyframes grow { from { transform: scaleX(0); } }
+		.result-note { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--line); font-size: 14px; color: var(--muted); }
+		.disclaimer { max-width: 680px; margin: 22px auto 0; text-align: center; font-size: 14px; color: var(--soft); }
+
+		/* ---------- how it works (stacked cards) ---------- */
+		.stack { display: flex; flex-direction: column; gap: 40px; margin-top: 44px; }
+		.stack-card {
+			position: sticky; top: calc(100px + var(--i) * 22px);
+			display: grid; grid-template-columns: 1fr 1fr; align-items: center; gap: 40px;
+			min-height: 380px; padding: 48px 56px;
+			border-radius: 32px; background: var(--c);
+			border: 1px solid rgba(35, 56, 118, 0.07);
+			box-shadow: 0 -10px 30px rgba(35, 56, 118, 0.04);
+		}
+		.stack-step { font: 700 13px/1 var(--font-body); letter-spacing: 0.14em; color: var(--soft); }
+		.stack-card h3 { margin-top: 14px; font: 500 24px/1.3 var(--font-head); color: #55555e; letter-spacing: -0.01em; }
+		.stack-kind { margin-top: 6px; font: 400 18px/1.4 var(--font-head); color: #7a7a84; }
+		.stack-desc { margin-top: 16px; max-width: 440px; color: var(--muted); line-height: 1.7; }
+		.stack-desc code { font-size: 0.9em; padding: 1px 6px; border-radius: 6px; background: rgba(35, 56, 118, 0.08); color: var(--navy); }
+		.vis { display: flex; align-items: center; justify-content: center; gap: 18px; min-width: 0; }
+		.vis-arrow { flex: none; font: 600 22px/1 var(--font-head); color: var(--soft); }
+		.vis-caption { margin-top: 10px; text-align: center; font-size: 13px; color: var(--soft); }
+
+		.mini-window { width: min(320px, 100%); border-radius: 16px; background: #fff; box-shadow: 0 20px 50px rgba(35, 56, 118, 0.14); overflow: hidden; }
+		.mini-bar { display: flex; gap: 6px; padding: 10px 12px; border-bottom: 1px solid #eef0f4; }
+		.mini-bar i { width: 9px; height: 9px; border-radius: 50%; background: #e3e5ec; }
+		.mini-body { padding: 14px; }
+		.mini-body img { width: 100%; aspect-ratio: 16 / 10; object-fit: cover; border-radius: 10px; }
+		.mini-file { display: flex; justify-content: space-between; margin-top: 12px; font-size: 13px; color: var(--muted); }
+		.mini-progress { height: 6px; margin-top: 8px; border-radius: 999px; background: #eef0f4; overflow: hidden; }
+		.mini-progress b { display: block; width: 72%; height: 100%; border-radius: inherit; background: var(--navy); }
+
+		.resize-img { border-radius: 14px; box-shadow: 0 16px 40px rgba(35, 56, 118, 0.16); }
+		.resize-big { width: 170px; height: 170px; }
+		.resize-small { position: relative; width: 110px; height: 110px; overflow: hidden; }
+		.resize-small img { width: 100%; height: 100%; image-rendering: pixelated; filter: saturate(0) contrast(1.1) sepia(0.5) hue-rotate(180deg); }
+		.resize-small::after {
+			content: ""; position: absolute; inset: 0;
+			background-image: linear-gradient(rgba(255, 255, 255, 0.18) 1px, transparent 1px), linear-gradient(90deg, rgba(255, 255, 255, 0.18) 1px, transparent 1px);
+			background-size: 11px 11px;
+		}
+
+		.net-blocks { display: flex; align-items: center; gap: 8px; height: 170px; }
+		.net-blocks span {
+			display: grid; place-items: end center; width: 34px; height: var(--h); padding-bottom: 8px;
+			border-radius: 10px; background: linear-gradient(180deg, #8c9bd0, var(--navy));
+			color: #fff; font-size: 11px; font-weight: 700;
+		}
+		.net-outs { display: grid; gap: 10px; }
+		.net-outs span { padding: 8px 14px; border-radius: 999px; background: #fff; font-size: 14px; font-weight: 700; box-shadow: 0 8px 20px rgba(35, 56, 118, 0.1); }
+		.net-outs span:first-child { color: var(--normal); }
+		.net-outs span:last-child { color: var(--tumor); }
+
+		.pipe { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; counter-reset: stage; width: min(320px, 100%); }
+		.pipe li {
+			display: flex; align-items: center; gap: 12px; padding: 12px 16px;
+			border-radius: 14px; background: #fff; box-shadow: 0 8px 22px rgba(35, 56, 118, 0.08);
+			font: 500 14px/1.3 ui-monospace, "Cascadia Code", Consolas, monospace; color: var(--ink);
+		}
+		.pipe li::before {
+			counter-increment: stage; content: counter(stage);
+			flex: none; width: 24px; height: 24px; border-radius: 50%;
+			display: grid; place-items: center; background: var(--navy); color: #fff;
+			font: 700 12px/1 var(--font-body);
+		}
+		.pipe-tags { display: flex; justify-content: center; gap: 8px; margin-top: 14px; }
+		.pipe-tags span { padding: 5px 12px; border-radius: 999px; font-size: 13px; font-weight: 700; color: var(--navy); background: rgba(35, 56, 118, 0.09); }
+
+		/* ---------- model report ---------- */
+		.stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 24px; margin-top: 44px; }
+		.stat {
+			display: flex; flex-direction: column; justify-content: space-between; gap: 24px;
+			min-height: 270px; padding: 28px 30px; border-radius: 20px; background: var(--c);
+		}
+		.stat-value {
+			margin: auto 0; text-align: center;
+			font: 800 clamp(52px, 6.5vw, 80px)/1 var(--font-head); color: var(--navy); letter-spacing: -0.04em;
+			font-variant-numeric: tabular-nums;
+		}
+		.stat h3 { font: 400 22px/1.25 var(--font-head); color: #63636c; }
+		.stat h3 + p { margin-top: 4px; font-size: 15px; color: var(--muted); }
+		.stat-wide { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr 1fr; align-items: center; gap: 40px; padding: 40px; }
+		.stat-wide h3 { font-size: 26px; }
+		.stat-wide h3 + p { margin-top: 12px; max-width: 440px; font-size: 16px; line-height: 1.7; }
+		.matrix { width: 100%; border-collapse: separate; border-spacing: 8px; font-variant-numeric: tabular-nums; }
+		.matrix th { font: 500 13px/1.3 var(--font-body); color: var(--soft); text-align: center; }
+		.matrix tbody th { text-align: right; padding-right: 6px; }
+		.matrix td { padding: 20px 10px; border-radius: 14px; text-align: center; background: rgba(255, 255, 255, 0.7); color: var(--muted); }
+		.matrix td strong { display: block; font: 800 30px/1 var(--font-head); color: var(--ink); }
+		.matrix td.hit { background: var(--navy); color: rgba(255, 255, 255, 0.75); }
+		.matrix td.hit strong { color: #fff; }
+		.matrix td span { display: block; margin-top: 6px; font-size: 12px; }
+
+		/* ---------- footer ---------- */
+		.footer { margin-top: 130px; padding: 120px 0 40px; background: var(--footer); }
+		.footer-grid { display: grid; grid-template-columns: 1.3fr 1fr; align-items: center; gap: 48px; }
+		.footer-title { font: 700 clamp(56px, 9vw, 116px)/0.98 var(--font-display); letter-spacing: -0.035em; color: #111; }
+		.footer-link {
+			display: inline-flex; flex-direction: column; align-items: flex-start; gap: 6px;
+			margin: 36px 0 0 clamp(0px, 14vw, 170px);
+			font: 500 18px/1.3 var(--font-head); color: #44444c; text-decoration: none;
+		}
+		.footer-link svg { width: 22px; height: 22px; color: #111; transition: transform 0.25s ease; }
+		.footer-link:hover svg { transform: translate(3px, 3px); }
+		.footer-link:hover span { text-decoration: underline; text-underline-offset: 4px; }
+		.footer-side p { margin-top: 22px; max-width: 360px; font: 500 20px/1.5 var(--font-body); color: #5a5a62; }
+		.footer-bottom {
+			display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px;
+			margin-top: 110px; padding-top: 24px; border-top: 1px solid rgba(0, 0, 0, 0.08);
+			font-size: 14px; color: var(--soft);
+		}
+		.footer-bottom a { text-decoration: none; }
+		.footer-bottom a:hover { color: var(--ink); }
+
+		/* ---------- reveal on scroll ---------- */
+		.js .reveal { opacity: 0; transform: translateY(26px); transition: opacity 0.8s ease, transform 0.8s cubic-bezier(0.2, 0.7, 0.2, 1); transition-delay: calc(var(--d, 0) * 100ms); }
+		.js .reveal.in { opacity: 1; transform: none; }
+
+		/* ---------- responsive ---------- */
+		@media (max-width: 900px) {
+			.hero-grid { grid-template-columns: 1fr; gap: 56px; }
+			.badge { width: min(260px, 70vw); }
+			.stack-card { grid-template-columns: 1fr; padding: 36px; gap: 32px; }
+			.stat-wide { grid-template-columns: 1fr; }
+			.footer-grid { grid-template-columns: 1fr; }
+		}
+		@media (max-width: 760px) {
+			:root { --gutter: 16px; }
+			.nav-links { display: none; }
+			.nav .btn { height: 40px; padding: 0 18px; font-size: 14px; }
+			.hero { padding: 120px 0 60px; min-height: 0; }
+			.check-grid, .stats { grid-template-columns: 1fr; }
+			.drop, .result { min-height: 300px; }
+			.card-foot { flex-wrap: wrap; }
+			.stack { gap: 20px; }
+			.stack-card { position: static; min-height: 0; padding: 28px 22px; border-radius: 24px; }
+			.vis { flex-wrap: wrap; }
+			.resize-big { width: 130px; height: 130px; }
+			.resize-small { width: 90px; height: 90px; }
+			.net-blocks { height: 130px; gap: 6px; }
+			.net-blocks span { width: 28px; }
+			.stat { min-height: 220px; }
+			.stat-wide { padding: 28px 22px; }
+			.matrix { border-spacing: 5px; }
+			.matrix td { padding: 14px 6px; }
+			.matrix td strong { font-size: 24px; }
+			.footer { margin-top: 100px; padding-top: 90px; }
+			.footer-link { margin-left: 0; }
+			.footer-bottom { margin-top: 70px; }
+		}
+		@media (prefers-reduced-motion: reduce) {
+			html { scroll-behavior: auto; }
+			.intro { display: none; }
+			*, *::before, *::after { animation: none !important; transition: none !important; }
+			.js .reveal { opacity: 1; transform: none; }
+		}
+	</style>
+</head>
+<body>
+{% macro pct(v) %}{{ "%.1f"|format(v * 100) }}%{% endmacro %}
+{% set report_keys = ["accuracy", "precision", "recall", "specificity", "roc_auc", "true_positive", "false_negative", "true_negative", "false_positive"] %}
+{% set has_report = scores is not none and (report_keys|reject("in", scores)|list|length == 0) %}
+
+	<div class="intro" aria-hidden="true">
+		<div class="intro-words"><div>
+			<span>From slices to signals</span>
+			<span>welcome to the</span>
+			<span>kidney scan check</span>
+		</div></div>
+		<div class="intro-line"><b></b></div>
+	</div>
+
+	<header class="nav" id="nav">
+		<a class="brand" href="#top" aria-label="Kidney CT Classifier, back to top">
+			<span class="logo">
+				<svg viewBox="0 0 32 32" aria-hidden="true"><path d="M17 6C11 6 7 10.5 7 16.5S11 27 17 27c3.6 0 6-2 6-4.6 0-2-1.6-3-3.2-3.8-1.3-.6-1.8-1.3-1.8-2.1s.5-1.5 1.8-2.1C21.4 13.6 23 12.6 23 10.6 23 8 20.6 6 17 6z" fill="#233876"/><circle cx="11.5" cy="11" r="3.2" fill="#F5B82E"/></svg>
+			</span>
+			<span class="brand-name">Kidney CT Classifier</span>
+		</a>
+		<nav class="nav-links" aria-label="Sections">
+			<a href="#check">Check a Scan</a>
+			<a href="#how">How It Works</a>
+			{% if has_report %}<a href="#model">Model</a>{% endif %}
+		</nav>
+		<a class="btn btn-dark" href="#check">Upload a Scan</a>
+	</header>
+
+	<main>
+		<section class="hero" id="top">
+			<div class="blobs" aria-hidden="true"><i class="b1"></i><i class="b2"></i><i class="b3"></i></div>
+			<div class="wrap hero-grid">
+				<div>
+					<h1 class="reveal">Screening with <em>Deep Learning</em>, Spotting <em>Kidney Tumors</em> in CT Scans</h1>
+					<p class="hero-lede reveal" style="--d:1">Hello! This is a <strong><i>transfer-learning classifier</i></strong> built on VGG16. Upload a kidney CT slice and it tells you whether the kidney looks Normal or shows signs of a Tumor.</p>
+					<div class="hero-actions reveal" style="--d:2">
+						<a class="btn btn-dark" href="#check">Check a scan</a>
+						<a class="btn btn-ghost" href="#how">How it works</a>
+					</div>
+				</div>
+				<div class="badge reveal" style="--d:2" aria-hidden="true">
+					<svg class="badge-ring" viewBox="0 0 200 200">
+						<defs><path id="ring-path" d="M100,100 m-84,0 a84,84 0 1,1 168,0 a84,84 0 1,1 -168,0"/></defs>
+						<text><textPath href="#ring-path" textLength="520" lengthAdjust="spacing">KIDNEY CT ✦ TUMOR CLASSIFIER ✦ VGG16 ✦</textPath></text>
+					</svg>
+					<img src="{{ url_for('static', filename='sample-scan.jpg') }}" alt="">
+				</div>
+			</div>
+		</section>
+
+		<section class="marquee" aria-label="Project topics">
+			<div class="marquee-track" aria-hidden="true">
+				<p>CT Scan Screening • Tumor Detection • Transfer Learning • VGG16 •</p>
+				<p>CT Scan Screening • Tumor Detection • Transfer Learning • VGG16 •</p>
+			</div>
+			<div class="marquee-track" aria-hidden="true">
+				<p>TensorFlow • MLflow Tracking • DVC Pipelines • Flask API •</p>
+				<p>TensorFlow • MLflow Tracking • DVC Pipelines • Flask API •</p>
+			</div>
+			<p class="sr-only">CT scan screening, tumor detection, transfer learning with VGG16, built with TensorFlow, MLflow, DVC and Flask.</p>
+		</section>
+
+		<section class="section" id="check">
+			<div class="wrap">
+				<h2 class="section-title reveal">Check a Scan</h2>
+				<p class="section-sub reveal" style="--d:1">Upload one kidney CT slice as a JPG or PNG. It's checked in memory and never saved. No scan handy? <button class="link-btn" id="sample-btn" type="button">Try the sample scan</button></p>
+
+				<div class="check-grid">
+					<div class="card card-blue reveal">
+						<label class="drop" id="drop" for="file">
+							<input class="sr-only" type="file" id="file" accept="image/*">
+							<span class="drop-empty">
+								<span class="drop-icon">
+									<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 16V4m0 0-4.5 4.5M12 4l4.5 4.5"/><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></svg>
+								</span>
+								<strong>Drag &amp; drop a CT scan</strong>
+								<span>or <u>browse your files</u></span>
+								<small>JPG or PNG, up to 10 MB</small>
+							</span>
+							<img id="preview" alt="The CT scan you chose" hidden>
+							<span class="drop-change">Click to change</span>
+						</label>
+						<div class="card-foot">
+							<div>
+								<h3 class="card-title">Your scan</h3>
+								<p class="card-meta" id="file-meta">No file chosen yet</p>
+							</div>
+							<button class="btn btn-dark" id="check-btn" type="button" disabled>Check scan</button>
+						</div>
+					</div>
+
+					<div class="card card-mint reveal" style="--d:1">
+						<div class="result" id="result" data-state="empty" aria-live="polite">
+							<div class="result-msg">
+								<div class="result-art"></div>
+								<h4>Your result will show up here</h4>
+								<p>Choose a scan on the left, then press “Check scan”.</p>
+							</div>
+						</div>
+						<div class="card-foot">
+							<div>
+								<h3 class="card-title">Result</h3>
+								<p class="card-meta" id="result-meta">Waiting for a scan</p>
+							</div>
+						</div>
+					</div>
+				</div>
+				<p class="disclaimer">For research and learning only. This model is not a medical device and its output is not a diagnosis. Talk to a doctor about any health concern.</p>
+			</div>
+		</section>
+
+		<section class="section" id="how">
+			<div class="wrap">
+				<h2 class="section-title reveal">How It Works</h2>
+				<div class="stack">
+					<article class="stack-card" style="--i:0; --c:var(--stack-1)">
+						<div>
+							<p class="stack-step">STEP 01</p>
+							<h3>Upload</h3>
+							<p class="stack-kind">Browser to Flask API</p>
+							<p class="stack-desc">You pick a CT slice and the page sends it to the <code>/predict</code> endpoint as base64. The server decodes it in memory, so nothing is written to disk.</p>
+						</div>
+						<div class="vis">
+							<div class="mini-window" aria-hidden="true">
+								<div class="mini-bar"><i></i><i></i><i></i></div>
+								<div class="mini-body">
+									<img src="{{ url_for('static', filename='sample-scan.jpg') }}" alt="">
+									<div class="mini-file"><span>sample-scan.jpg</span><span>uploading…</span></div>
+									<div class="mini-progress"><b></b></div>
+								</div>
+							</div>
+						</div>
+					</article>
+
+					<article class="stack-card" style="--i:1; --c:var(--stack-2)">
+						<div>
+							<p class="stack-step">STEP 02</p>
+							<h3>Preprocess</h3>
+							<p class="stack-kind">Resize to 224 × 224</p>
+							<p class="stack-desc">The image is resized to the network's 224 × 224 input with bilinear interpolation, then run through VGG16's ImageNet preprocessing. Training, evaluation and prediction all share this one step.</p>
+						</div>
+						<div aria-hidden="true">
+							<div class="vis">
+								<img class="resize-img resize-big" src="{{ url_for('static', filename='sample-scan.jpg') }}" alt="">
+								<span class="vis-arrow">→</span>
+								<div class="resize-img resize-small"><img src="{{ url_for('static', filename='sample-scan.jpg') }}" alt=""></div>
+							</div>
+							<p class="vis-caption">Any size in, 224 × 224 out</p>
+						</div>
+					</article>
+
+					<article class="stack-card" style="--i:2; --c:var(--stack-3)">
+						<div>
+							<p class="stack-step">STEP 03</p>
+							<h3>Classify</h3>
+							<p class="stack-kind">VGG16 transfer learning</p>
+							<p class="stack-desc">A VGG16 backbone pretrained on ImageNet turns the scan into features. Its layers stay frozen, and a small softmax head trained on the Kaggle CT Kidney dataset scores each class.</p>
+						</div>
+						<div aria-hidden="true">
+							<div class="vis">
+								<div class="net-blocks">
+									<span style="--h:100%">64</span>
+									<span style="--h:84%">128</span>
+									<span style="--h:68%">256</span>
+									<span style="--h:52%">512</span>
+									<span style="--h:38%">512</span>
+								</div>
+								<span class="vis-arrow">→</span>
+								<div class="net-outs"><span>Normal</span><span>Tumor</span></div>
+							</div>
+							<p class="vis-caption">5 frozen conv blocks, then a softmax head</p>
+						</div>
+					</article>
+
+					<article class="stack-card" style="--i:3; --c:var(--stack-4)">
+						<div>
+							<p class="stack-step">STEP 04</p>
+							<h3>Track</h3>
+							<p class="stack-kind">DVC pipeline + MLflow</p>
+							<p class="stack-desc">Each stage, from data ingestion to evaluation, is a reproducible DVC stage. Evaluation writes the test-set metrics to <code>scores.json</code>, which feeds the model report below, and the same run can be logged to MLflow.</p>
+						</div>
+						<div aria-hidden="true">
+							<ol class="pipe">
+								<li>data_ingestion</li>
+								<li>prepare_base_model</li>
+								<li>training</li>
+								<li>evaluation</li>
+							</ol>
+							<div class="pipe-tags"><span>DVC</span><span>MLflow</span></div>
+						</div>
+					</article>
+				</div>
+			</div>
+		</section>
+
+		{% if has_report %}
+		{% set tp = scores.true_positive %}{% set fn = scores.false_negative %}
+		{% set tn = scores.true_negative %}{% set fp = scores.false_positive %}
+		<section class="section" id="model">
+			<div class="wrap">
+				<h2 class="section-title reveal">Model Report</h2>
+				<p class="section-sub reveal" style="--d:1">Measured on {{ tp + fn + tn + fp }} held-out CT slices the model never saw during training.</p>
+				<div class="stats">
+					<article class="stat reveal" style="--c:var(--card-blue)">
+						<p class="stat-value">{{ pct(scores.accuracy) }}</p>
+						<div><h3>Accuracy</h3><p>of all test scans classified correctly</p></div>
+					</article>
+					<article class="stat reveal" style="--c:var(--card-mint); --d:1">
+						<p class="stat-value">{{ pct(scores.recall) }}</p>
+						<div><h3>Tumor recall</h3><p>caught {{ tp }} of {{ tp + fn }} tumor scans</p></div>
+					</article>
+					<article class="stat reveal" style="--c:var(--card-sky)">
+						<p class="stat-value">{{ pct(scores.specificity) }}</p>
+						<div><h3>Specificity</h3><p>cleared {{ tn }} of {{ tn + fp }} normal scans</p></div>
+					</article>
+					<article class="stat reveal" style="--c:var(--card-blue); --d:1">
+						<p class="stat-value">{{ "%.2f"|format(scores.roc_auc) }}</p>
+						<div><h3>ROC AUC</h3><p>how well it ranks tumor scans above normal ones (1.00 is perfect)</p></div>
+					</article>
+					<article class="stat stat-wide reveal" style="--c:var(--card-mint)">
+						<div>
+							<h3>Where it goes wrong</h3>
+							<p>The model leans cautious. It missed only {{ fn }} of {{ tp + fn }} tumor scans, but it also flagged {{ fp }} normal scans as tumors, so {{ pct(1 - scores.precision) }} of its tumor flags were false alarms.</p>
+						</div>
+						<table class="matrix">
+							<caption class="sr-only">Confusion matrix on the test set</caption>
+							<thead>
+								<tr><td style="background:none"></td><th scope="col">Predicted Normal</th><th scope="col">Predicted Tumor</th></tr>
+							</thead>
+							<tbody>
+								<tr>
+									<th scope="row">Normal</th>
+									<td class="hit"><strong>{{ tn }}</strong><span>correct</span></td>
+									<td><strong>{{ fp }}</strong><span>false alarm</span></td>
+								</tr>
+								<tr>
+									<th scope="row">Tumor</th>
+									<td><strong>{{ fn }}</strong><span>missed</span></td>
+									<td class="hit"><strong>{{ tp }}</strong><span>correct</span></td>
+								</tr>
+							</tbody>
+						</table>
+					</article>
+				</div>
+			</div>
+		</section>
+		{% endif %}
+	</main>
+
+	<footer class="footer" id="about">
+		<div class="wrap footer-grid">
+			<div>
+				<h2 class="footer-title">Let’s<br>check<br>your scan</h2>
+				<a class="footer-link" href="#check">
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6l12 12M18 8v10H8"/></svg>
+					<span>Upload a kidney CT slice</span>
+				</a>
+			</div>
+			<div class="footer-side">
+				<a class="btn btn-dark" href="#check">Check a Scan</a>
+				<p>Results in a few seconds. Built for research and learning, not for medical diagnosis.</p>
+			</div>
+		</div>
+		<div class="wrap">
+			<div class="footer-bottom">
+				<span>Kidney CT Classifier · built with TensorFlow, MLflow &amp; DVC</span>
+				<a href="#top">Back to top ↑</a>
+			</div>
+		</div>
+	</footer>
+
+<script>
+(() => {
+	const PREDICT_URL = "{{ url_for('predictRoute') }}";
+	const SAMPLE_URL = "{{ url_for('static', filename='sample-scan.jpg') }}";
+	const MAX_BYTES = 10 * 1024 * 1024;
+
+	const $ = (id) => document.getElementById(id);
+	const drop = $("drop"), fileInput = $("file"), preview = $("preview"), fileMeta = $("file-meta");
+	const checkBtn = $("check-btn"), sampleBtn = $("sample-btn");
+	const result = $("result"), resultMeta = $("result-meta");
+	const logoSvg = document.querySelector(".logo svg");
+
+	let imageBase64 = null;
+	let busy = false;
+
+	function el(tag, className, text) {
+		const node = document.createElement(tag);
+		if (className) node.className = className;
+		if (text != null) node.textContent = text;
+		return node;
+	}
+
+	function formatSize(bytes) {
+		return bytes < 1024 * 1024 ? Math.max(1, Math.round(bytes / 1024)) + " KB" : (bytes / 1024 / 1024).toFixed(1) + " MB";
+	}
+
+	function formatPct(p) {
+		return (p * 100).toFixed(1) + "%";
+	}
+
+	// shared layout for the empty, ready, loading and error states of the result card
+	function showMessage(state, title, text, meta) {
+		const art = el("div", "result-art");
+		if (state === "loading") art.append(el("div", "spinner"));
+		else if (state === "error") art.textContent = "!";
+		else art.append(logoSvg.cloneNode(true));
+
+		const box = el("div", "result-msg");
+		box.append(art, el("h4", null, title), el("p", null, text));
+		result.dataset.state = state;
+		result.replaceChildren(box);
+		resultMeta.textContent = meta;
+	}
+
+	function showError(message) {
+		showMessage("error", "Something went wrong", message, "No result");
+	}
+
+	function toneOf(label) {
+		if (/tumou?r/i.test(label)) return "tumor";
+		if (/normal/i.test(label)) return "normal";
+		return "other";
+	}
+
+	function showPrediction(prediction, seconds) {
+		const label = prediction.image;
+		const tone = toneOf(label);
+		const probabilities = prediction.probabilities && typeof prediction.probabilities === "object" ? prediction.probabilities : null;
+		const nodes = [el("p", "result-kicker", "Prediction")];
+
+		const heading = el("h4", "result-label", label);
+		heading.dataset.tone = tone;
+		nodes.push(heading);
+
+		if (probabilities && typeof probabilities[label] === "number") {
+			nodes.push(el("p", "result-conf", `The model is ${formatPct(probabilities[label])} confident in this result.`));
+			const bars = el("div", "bars");
+			for (const [name, p] of Object.entries(probabilities)) {
+				const row = el("div");
+				const head = el("div", "bar-head");
+				head.append(el("span", null, name), el("span", null, formatPct(p)));
+				const track = el("div", "bar-track");
+				const fill = el("div", "bar-fill");
+				fill.dataset.tone = toneOf(name);
+				fill.style.width = Math.max(0, Math.min(1, p)) * 100 + "%";
+				track.append(fill);
+				row.append(head, track);
+				bars.append(row);
+			}
+			nodes.push(bars);
+		}
+
+		const notes = {
+			tumor: "The model found patterns it links to kidney tumors. Only a doctor can confirm this, so please share the scan with one.",
+			normal: "The model found no tumor pattern. That is not a medical all-clear, so talk to a doctor about any symptoms.",
+		};
+		if (notes[tone]) nodes.push(el("p", "result-note", notes[tone]));
+
+		result.dataset.state = "done";
+		result.replaceChildren(...nodes);
+		resultMeta.textContent = `Checked in ${seconds.toFixed(1)} s`;
+	}
+
+	// reads the file into base64 for the API; resolves true once the scan is ready to check
+	function handleFile(file) {
+		return new Promise((resolve) => {
+			if (!file) return resolve(false);
+			if (!file.type.startsWith("image/")) {
+				showError("That file isn't an image. Choose a JPG or PNG CT scan.");
+				return resolve(false);
+			}
+			if (file.size > MAX_BYTES) {
+				showError(`That image is ${formatSize(file.size)}. Choose one under 10 MB.`);
+				return resolve(false);
+			}
+			const reader = new FileReader();
+			reader.onload = () => {
+				const dataUrl = reader.result;
+				imageBase64 = dataUrl.slice(dataUrl.indexOf(",") + 1);
+				preview.src = dataUrl;
+				preview.hidden = false;
+				drop.classList.add("has-image");
+				fileMeta.textContent = `${file.name} · ${formatSize(file.size)}`;
+				checkBtn.disabled = busy;
+				showMessage("ready", "Ready when you are", "Press “Check scan” to run the model on this image.", "Not checked yet");
+				resolve(true);
+			};
+			reader.onerror = () => {
+				showError("Couldn't read that file. Try another image.");
+				resolve(false);
+			};
+			reader.readAsDataURL(file);
+		});
+	}
+
+	async function checkScan() {
+		if (!imageBase64 || busy) return;
+		busy = true;
+		checkBtn.disabled = true;
+		sampleBtn.disabled = true;
+		drop.classList.add("scanning");
+		showMessage("loading", "Checking your scan…", "The first check can take a few seconds while the model loads.", "Running the model");
+		const started = performance.now();
+		try {
+			let response;
+			try {
+				response = await fetch(PREDICT_URL, {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ image: imageBase64 }),
+				});
+			} catch (e) {
+				throw new Error("Couldn't reach the server. Check that app.py is still running.");
+			}
+			const data = await response.json().catch(() => null);
+			if (!response.ok) throw new Error((data && data.error) || `The server answered ${response.status} ${response.statusText}.`);
+			const prediction = Array.isArray(data) ? data[0] : data;
+			if (!prediction || typeof prediction.image !== "string") throw new Error("The server sent back an answer this page doesn't understand.");
+			showPrediction(prediction, (performance.now() - started) / 1000);
+		} catch (err) {
+			showError(err.message);
+		} finally {
+			busy = false;
+			checkBtn.disabled = !imageBase64;
+			sampleBtn.disabled = false;
+			drop.classList.remove("scanning");
+		}
+	}
+
+	fileInput.addEventListener("change", () => {
+		handleFile(fileInput.files[0]);
+		fileInput.value = "";  // so picking the same file again still fires "change"
+	});
+
+	drop.addEventListener("dragover", (e) => {
+		e.preventDefault();
+		drop.classList.add("dragging");
+	});
+	drop.addEventListener("dragleave", (e) => {
+		if (!drop.contains(e.relatedTarget)) drop.classList.remove("dragging");
+	});
+	drop.addEventListener("drop", (e) => {
+		e.preventDefault();
+		drop.classList.remove("dragging");
+		handleFile(e.dataTransfer.files[0]);
+	});
+	// a file dropped next to the drop zone would otherwise replace the page
+	window.addEventListener("dragover", (e) => e.preventDefault());
+	window.addEventListener("drop", (e) => e.preventDefault());
+
+	checkBtn.addEventListener("click", checkScan);
+
+	sampleBtn.addEventListener("click", async () => {
+		if (busy) return;
+		try {
+			const response = await fetch(SAMPLE_URL);
+			if (!response.ok) throw new Error();
+			const blob = await response.blob();
+			const ready = await handleFile(new File([blob], "sample-scan.jpg", { type: blob.type || "image/jpeg" }));
+			if (ready) checkScan();
+		} catch (e) {
+			showError("Couldn't load the sample scan.");
+		}
+	});
+
+	showMessage("empty", "Your result will show up here", "Choose a scan on the left, then press “Check scan”.", "Waiting for a scan");
+
+	// nav tightens once the page scrolls
+	const nav = $("nav");
+	const onScroll = () => nav.classList.toggle("scrolled", window.scrollY > 40);
+	window.addEventListener("scroll", onScroll, { passive: true });
+	onScroll();
+
+	// fade sections in as they scroll into view, after the intro screen if it's playing
+	const intro = document.querySelector(".intro");
+	const introPlaying = intro && getComputedStyle(intro).display !== "none";
+	if (intro) intro.addEventListener("animationend", (e) => { if (e.animationName === "intro-out") intro.remove(); });
+	const reveals = document.querySelectorAll(".reveal");
+	setTimeout(() => {
+		if (!("IntersectionObserver" in window)) {
+			reveals.forEach((node) => node.classList.add("in"));
+			return;
+		}
+		const observer = new IntersectionObserver((entries) => {
+			for (const entry of entries) {
+				if (!entry.isIntersecting) continue;
+				entry.target.classList.add("in");
+				observer.unobserve(entry.target);
+			}
+		}, { threshold: 0.12, rootMargin: "0px 0px -40px 0px" });
+		reveals.forEach((node) => observer.observe(node));
+	}, introPlaying ? 1900 : 0);
+})();
+</script>
+</body>
+</html>

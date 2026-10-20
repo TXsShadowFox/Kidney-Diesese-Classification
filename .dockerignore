@@ -1,0 +1,17 @@
+.git
+.github
+.dvc/cache
+.dvc/tmp
+mlruns
+logs
+research
+data
+inputImage.jpg
+**/__pycache__
+*.egg-info
+.venv
+venv
+
+# the image only needs the trained model, not the dataset or base models
+artifacts/*
+!artifacts/training

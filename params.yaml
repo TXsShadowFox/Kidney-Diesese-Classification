@@ -1,0 +1,13 @@
+AUGMENTATION: True
+IMAGE_SIZE: [224, 224, 3] # as per VGG 16 model
+BATCH_SIZE: 16
+INCLUDE_TOP: False
+EPOCHS: 2
+CLASSES: 2 # must equal the number of DATA_CLASSES
+DATA_CLASSES: [Normal, Tumor] # dataset folders to use; Cyst and Stone are left out
+WEIGHTS: imagenet
+LEARNING_RATE: 0.01
+VALIDATION_SPLIT: 0.15
+TEST_SPLIT: 0.15 # held out, only used by the evaluation stage
+SEED: 42
+POSITIVE_CLASS: Tumor # class folder the recall/specificity/AUC metrics treat as positive
